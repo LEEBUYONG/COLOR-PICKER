@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>퍼스널 컬러 분석기</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── HEADER ── -->
+  <header class="header">
+    <h1>🎨 퍼스널 컬러 분석기</h1>
+    <p>PCCS 톤 체계 기반 · 12가지 퍼스널 컬러 완전 분석</p>
+    <div class="header-badges">
+      <span class="badge">💄 화장 추천</span>
+      <span class="badge">👗 의상 추천</span>
+      <span class="badge">💇 헤어 추천</span>
+      <span class="badge">📊 PCCS 톤 분석</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- ── INPUT CARD ── -->
+    <section class="card input-card">
+      <p class="section-label">🎨 색상 입력 (HEX / RGB)</p>
+
+      <div class="input-row">
+        <input type="color" id="colorPicker" value="#FF6B6B" />
+        <input type="text"  id="hexInput"    value="#FF6B6B"
+               placeholder="#RRGGBB 또는 rgb(r,g,b)" />
+      </div>
+
+      <!-- 색상 미리보기 -->
+      <div class="preview-strip" id="previewStrip" hidden>
+        <div class="preview-circle" id="previewCircle"></div>
+        <div class="preview-info">
+          <div class="preview-hex" id="previewHex"></div>
+          <div class="preview-pills" id="previewPills"></div>
+        </div>
+      </div>
+
+      <!-- PCCS 톤 그리드 -->
+      <div class="pccs-section">
+        <p class="section-label">📊 PCCS 톤 위치</p>
+        <div class="pccs-grid" id="pccsGrid"></div>
+      </div>
+
+      <button class="analyze-btn" id="analyzeBtn">🔍 퍼스널 컬러 분석하기</button>
+    </section>
+
+    <!-- ── RESULT AREA ── -->
+    <section id="resultWrap">
+      <!-- 초기 안내 -->
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">🎨</div>
+        <p>색상을 입력하고 분석 버튼을 눌러주세요</p>
+      </div>
+
+      <!-- 분석 결과 (hidden → app.js 에서 표시) -->
+      <div id="resultContent" hidden>
+
+        <!-- PCCS 축 맵 -->
+        <div class="card" id="pccsMapCard">
+          <h2 class="card-title">📊 PCCS 톤 맵 — 입력 색상 위치</h2>
+          <div class="pccs-map" id="pccsMap"></div>
+          <p class="pccs-map-desc" id="pccsMapDesc"></p>
+        </div>
+
+        <!-- 베스트 / 워스트 -->
+        <div class="rank-grid">
+          <div class="card rank-card">
+            <h2 class="card-title">🏆 베스트 3</h2>
+            <ul class="rank-list" id="bestList"></ul>
+          </div>
+          <div class="card rank-card">
+            <h2 class="card-title">🚫 워스트 3</h2>
+            <ul class="rank-list" id="worstList"></ul>
+          </div>
+        </div>
+
+        <!-- 스타일 추천 -->
+        <div class="card" id="styleRecCard">
+          <h2 class="card-title">✨ 스타일 추천</h2>
+          <p class="style-rec-sub" id="styleRecSub"></p>
+          <div class="tab-bar">
+            <button class="tab-btn active" data-tab="hair">💇 헤어</button>
+            <button class="tab-btn"        data-tab="makeup">💄 메이크업</button>
+            <button class="tab-btn"        data-tab="outfit">👗 의상</button>
+          </div>
+          <div id="tab-hair"   class="tab-panel active"></div>
+          <div id="tab-makeup" class="tab-panel"></div>
+          <div id="tab-outfit" class="tab-panel"></div>
+        </div>
+
+        <!-- 시즌별 상세 분석 -->
+        <div id="seasonSections"></div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>© 2026 퍼스널 컬러 분석기 · PCCS 톤 체계 기반</p>
+  </footer>
+
+  <!-- JS -->
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+
+</body>
+</html>
