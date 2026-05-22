@@ -1,10 +1,17 @@
 /* ════════════════════════════════════════
-   app.js  —  퍼스널 컬러 분석기 메인 로직
-   의존: data.js (PCCS_TONES, SEASONS)
+   app.js  —  퍼스널 컬러 분석기 (개선판)
+   의존: data.js (PCCS_TONES, SEASONS, calcUndertone, inHueRange, scoreTypeImproved)
+   변경점:
+     - scoreTypeImproved() 사용 (4축 채점)
+     - 언더톤 수치 프리뷰에 표시
+     - PCCS 맵에 언더톤 방향 표시
+     - 결과 카드에 언더톤 뱃지 추가
+     - 시즌 테이블에 언더톤 열 추가
 ════════════════════════════════════════ */
 
+
 /* ──────────────────────────────────────
-   1. 유틸 — 색상 변환
+   1. 색상 변환 유틸
 ────────────────────────────────────── */
 function hexToRgb(hex) {
   hex = hex.replace(/^#/, '');
@@ -19,10 +26,8 @@ function rgbToHex({ r, g, b }) {
 
 function parseInput(raw) {
   raw = raw.trim();
-  // rgb(r,g,b)
   const m = raw.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
   if (m) return { r: +m[1], g: +m[2], b: +m[3] };
-  // hex
   const hex = raw.startsWith('#') ? raw : '#' + raw;
   if (/^#[0-9a-f]{3,6}$/i.test(hex)) return hexToRgb(hex);
   return null;
@@ -47,14 +52,19 @@ function rgbToHsl({ r, g, b }) {
 
 
 /* ──────────────────────────────────────
-   2. PCCS 톤 매칭
+   2. PCCS 톤 매칭 (개선: sat+lig+hue 3축)
 ────────────────────────────────────── */
-function matchPccsTone({ s, l }) {
+function matchPccsTone({ h, s, l }) {
   let best = null, bestScore = Infinity;
   for (const tone of PCCS_TONES) {
     const sc = Math.max(0, tone.sat[0] - s, s - tone.sat[1]);
     const lc = Math.max(0, tone.lig[0] - l, l - tone.lig[1]);
-    const score = sc + lc;
+    // [개선] hue 축도 반영 (PCCS_TONES에 hue 범위 추가됨)
+    let hc = 0;
+    if (tone.hue && tone.hue[0] !== 0 && tone.hue[1] !== 360) {
+      hc = Math.max(0, tone.hue[0] - h, h - tone.hue[1]) * 0.3;
+    }
+    const score = sc + lc + hc;
     if (score < bestScore) { bestScore = score; best = tone; }
   }
   return best;
@@ -62,55 +72,19 @@ function matchPccsTone({ s, l }) {
 
 
 /* ──────────────────────────────────────
-   3. 퍼스널 컬러 점수 계산
+   3. 전체 분석 실행
+   [개선] scoreTypeImproved() 사용 (data.js 에 정의)
 ────────────────────────────────────── */
-function inHueRange(h, ranges) {
-  return ranges.some(([mn, mx]) => h >= mn && h <= mx);
-}
-
-function scoreType(hsl, type) {
-  const { h, s, l } = hsl;
-  let score = 0;
-
-  // 색상 범위 (40점)
-  if (inHueRange(h, type.hueRange)) score += 40;
-  else {
-    // 가장 가까운 범위까지 거리 계산 → 부분 점수
-    let minDist = Infinity;
-    for (const [mn, mx] of type.hueRange) {
-      const d = h < mn ? mn - h : h > mx ? h - mx : 0;
-      if (d < minDist) minDist = d;
-    }
-    score += Math.max(0, 40 - minDist * 0.6);
-  }
-
-  // 채도 (30점)
-  if (s >= type.satMin && s <= type.satMax) score += 30;
-  else {
-    const d = s < type.satMin ? type.satMin - s : s - type.satMax;
-    score += Math.max(0, 30 - d * 0.8);
-  }
-
-  // 명도 (30점)
-  if (l >= type.ligMin && l <= type.ligMax) score += 30;
-  else {
-    const d = l < type.ligMin ? type.ligMin - l : l - type.ligMax;
-    score += Math.max(0, 30 - d * 0.8);
-  }
-
-  return Math.round(score);
-}
-
-function analyzeAll(hsl) {
+function analyzeAll(hsl, rgb) {
   const results = [];
   for (const season of SEASONS) {
     for (const type of season.types) {
       results.push({
-        season: season.season,
-        icon  : season.icon,
-        tone  : season.tone,
+        season : season.season,
+        icon   : season.icon,
+        tone   : season.tone,
         type,
-        score : scoreType(hsl, type),
+        score  : scoreTypeImproved(hsl, rgb, type),
       });
     }
   }
@@ -120,54 +94,58 @@ function analyzeAll(hsl) {
 
 
 /* ──────────────────────────────────────
-   4. 점수 → 등급 / 뱃지
+   4. 점수 → 등급
 ────────────────────────────────────── */
 function gradeOf(score) {
-  if (score >= 85) return { cls: 'best',  label: '최고 어울림' };
-  if (score >= 65) return { cls: 'good',  label: '잘 어울림'  };
-  if (score >= 40) return { cls: 'ok',    label: '보통'       };
-  return                  { cls: 'no',    label: '안 어울림'  };
-}
-
-function rankScoreCls(score, idx) {
-  if (idx === 0) return 'best';
-  if (idx === 1) return 'good';
-  return 'ok';
+  if (score >= 85) return { cls: 'best', label: '최고 어울림' };
+  if (score >= 65) return { cls: 'good', label: '잘 어울림'  };
+  if (score >= 40) return { cls: 'ok',   label: '보통'       };
+  return                  { cls: 'no',   label: '안 어울림'  };
 }
 
 
 /* ──────────────────────────────────────
-   5. PCCS 그리드 렌더링 (입력 영역)
+   5. 언더톤 뱃지 생성 헬퍼
+   [신규] 언더톤 수치 → 텍스트 + 색상
+────────────────────────────────────── */
+function undertoneLabel(ut) {
+  if (ut >=  40) return { text: '🔥 웜톤',    color: '#e07b39' };
+  if (ut >=  10) return { text: '🌤 약한 웜',  color: '#f0a060' };
+  if (ut >=  -9) return { text: '⚖️ 중립',    color: '#888888' };
+  if (ut >= -39) return { text: '❄️ 약한 쿨',  color: '#6aaccc' };
+  return               { text: '🌊 쿨톤',    color: '#457b9d' };
+}
+
+
+/* ──────────────────────────────────────
+   6. PCCS 그리드 렌더링
 ────────────────────────────────────── */
 function renderPccsGrid(activeTone) {
-  const grid = document.getElementById('pccsGrid');
-  grid.innerHTML = PCCS_TONES.map(t => `
+  document.getElementById('pccsGrid').innerHTML = PCCS_TONES.map(t => `
     <div class="pccs-cell ${activeTone && activeTone.key === t.key ? 'active' : ''}"
          style="background:${t.color}">
       <div class="tone-key">${t.key.toUpperCase()}</div>
       <div class="tone-label">${t.label}</div>
-    </div>
-  `).join('');
+    </div>`).join('');
 }
 
 
 /* ──────────────────────────────────────
-   6. PCCS 맵 렌더링 (결과 영역)
+   7. PCCS 맵 렌더링
+   [개선] 언더톤 방향 화살표 추가
 ────────────────────────────────────── */
-function renderPccsMap(hsl, activeTone) {
+function renderPccsMap(hsl, rgb, activeTone) {
   const wrap = document.getElementById('pccsMap');
   wrap.innerHTML = `<div class="pccs-map-inner" id="pccsMapInner"></div>`;
   const inner = document.getElementById('pccsMapInner');
 
-  // 축 선 + 라벨
   inner.innerHTML = `
     <div class="axis-v"></div>
     <div class="axis-h"></div>
     <div class="axis-label" style="top:2%;left:50%;transform:translateX(-50%)">고명도</div>
     <div class="axis-label" style="bottom:2%;left:50%;transform:translateX(-50%)">저명도</div>
     <div class="axis-label" style="top:50%;left:1%;transform:translateY(-50%)">저채도</div>
-    <div class="axis-label" style="top:50%;right:1%;transform:translateY(-50%)">고채도</div>
-  `;
+    <div class="axis-label" style="top:50%;right:1%;transform:translateY(-50%)">고채도</div>`;
 
   // 톤 점
   for (const t of PCCS_TONES) {
@@ -188,6 +166,19 @@ function renderPccsMap(hsl, activeTone) {
   inputDot.title = '입력 색상';
   inner.appendChild(inputDot);
 
+  // [개선] 언더톤 방향 레이블
+  const ut = calcUndertone(hsl.h, hsl.s, hsl.l, rgb.r, rgb.g, rgb.b);
+  const utInfo = undertoneLabel(ut);
+  const utEl = document.createElement('div');
+  utEl.style.cssText = `
+    position:absolute; bottom:6px; right:8px;
+    font-size:.65rem; font-weight:800;
+    background:${utInfo.color}22; color:${utInfo.color};
+    border:1px solid ${utInfo.color}66;
+    padding:3px 8px; border-radius:10px;`;
+  utEl.textContent = `${utInfo.text} (${ut > 0 ? '+' : ''}${ut})`;
+  inner.appendChild(utEl);
+
   // 설명
   document.getElementById('pccsMapDesc').textContent =
     activeTone
@@ -197,25 +188,33 @@ function renderPccsMap(hsl, activeTone) {
 
 
 /* ──────────────────────────────────────
-   7. 베스트 / 워스트 카드
+   8. 베스트 / 워스트 카드
+   [개선] 언더톤 뱃지 추가
 ────────────────────────────────────── */
-function renderRank(results) {
-  const medals = ['🥇','🥈','🥉'];
+function renderRank(results, ut) {
+  const medals = ['🥇', '🥈', '🥉'];
+  const scoreCls = (_, i) => i === 0 ? 'best' : i === 1 ? 'good' : 'ok';
 
-  // 베스트 3
-  document.getElementById('bestList').innerHTML = results.slice(0, 3).map((r, i) => `
-    <li class="rank-item">
-      <span class="rank-medal">${medals[i]}</span>
-      <div class="rank-info">
-        <div class="rank-name">${r.icon} ${r.type.name}</div>
-        <div class="rank-sub">${r.season} · ${r.type.keyword}</div>
-      </div>
-      <span class="rank-score ${rankScoreCls(r.score, i)}">${r.score}점</span>
-    </li>
-  `).join('');
+  document.getElementById('bestList').innerHTML = results.slice(0, 3).map((r, i) => {
+    const utMatch = ut >= r.type.undertoneRange[0] && ut <= r.type.undertoneRange[1];
+    return `
+      <li class="rank-item">
+        <span class="rank-medal">${medals[i]}</span>
+        <div class="rank-info">
+          <div class="rank-name">${r.icon} ${r.type.name}</div>
+          <div class="rank-sub">${r.season} · ${r.type.keyword}</div>
+          <div class="rank-meta">
+            ${utMatch
+              ? `<span class="ut-badge match">✅ 언더톤 일치</span>`
+              : `<span class="ut-badge nomatch">⚠️ 언더톤 불일치</span>`}
+            <span class="ut-badge tol">허용오차 ±${r.type.tolerance}</span>
+          </div>
+        </div>
+        <span class="rank-score ${scoreCls(r.score, i)}">${r.score}점</span>
+      </li>`;
+  }).join('');
 
-  // 워스트 3
-  document.getElementById('worstList').innerHTML = results.slice(-3).reverse().map((r, i) => `
+  document.getElementById('worstList').innerHTML = results.slice(-3).reverse().map(r => `
     <li class="rank-item worst">
       <span class="rank-medal">💔</span>
       <div class="rank-info">
@@ -223,96 +222,84 @@ function renderRank(results) {
         <div class="rank-sub">${r.season} · ${r.type.keyword}</div>
       </div>
       <span class="rank-score worst-score">${r.score}점</span>
-    </li>
-  `).join('');
+    </li>`).join('');
 }
 
 
 /* ──────────────────────────────────────
-   8. 스타일 추천 탭
+   9. 스타일 추천 탭
 ────────────────────────────────────── */
 function renderStyleRec(best) {
   const t = best.type;
   document.getElementById('styleRecSub').textContent =
-    `${best.icon} ${best.type.name} 기준 추천 (점수: ${best.score}점)`;
+    `${best.icon} ${t.name} 기준 추천 (점수: ${best.score}점)`;
 
   const dotRow = colors => colors.map(c =>
     `<div class="si-dot" style="background:${c}" title="${c}"></div>`
   ).join('');
 
-  // 헤어
-  document.getElementById('tab-hair').innerHTML = `
-    <div class="style-grid">
-      <div class="style-item full">
-        <div class="si-label">추천 헤어 컬러</div>
-        <div class="si-val">${t.hairTip}</div>
-        <div class="si-colors">${dotRow(t.hair)}</div>
-      </div>
-      <div class="style-item full">
-        <div class="si-label">⚠️ 피해야 할 헤어</div>
-        <div class="si-tip">${t.avoidHair}</div>
-      </div>
-    </div>`;
-
-  // 메이크업
-  document.getElementById('tab-makeup').innerHTML = `
-    <div class="style-grid">
-      <div class="style-item full">
-        <div class="si-label">추천 메이크업</div>
-        <div class="si-val">${t.makeupTip}</div>
-        <div class="si-colors">${dotRow(t.makeup)}</div>
-      </div>
-      <div class="style-item full">
-        <div class="si-label">⚠️ 피해야 할 메이크업</div>
-        <div class="si-tip">${t.avoidMakeup}</div>
-      </div>
-    </div>`;
-
-  // 의상
-  document.getElementById('tab-outfit').innerHTML = `
-    <div class="style-grid">
-      <div class="style-item full">
-        <div class="si-label">추천 의상 컬러</div>
-        <div class="si-val">${t.outfitTip}</div>
-        <div class="si-colors">${dotRow(t.outfit)}</div>
-      </div>
-      <div class="style-item full">
-        <div class="si-label">⚠️ 피해야 할 의상</div>
-        <div class="si-tip">${t.avoidOutfit}</div>
-      </div>
-    </div>`;
+  ['hair', 'makeup', 'outfit'].forEach(tab => {
+    const tip   = tab === 'hair' ? t.hairTip   : tab === 'makeup' ? t.makeupTip   : t.outfitTip;
+    const avoid = tab === 'hair' ? t.avoidHair : tab === 'makeup' ? t.avoidMakeup : t.avoidOutfit;
+    const cols  = t[tab];
+    const label = tab === 'hair' ? '추천 헤어 컬러' : tab === 'makeup' ? '추천 메이크업' : '추천 의상 컬러';
+    const avoidLabel = tab === 'hair' ? '헤어' : tab === 'makeup' ? '메이크업' : '의상';
+    document.getElementById('tab-' + tab).innerHTML = `
+      <div class="style-grid">
+        <div class="style-item full">
+          <div class="si-label">${label}</div>
+          <div class="si-val">${tip}</div>
+          <div class="si-colors">${dotRow(cols)}</div>
+        </div>
+        <div class="style-item full">
+          <div class="si-label">⚠️ 피해야 할 ${avoidLabel}</div>
+          <div class="si-tip">${avoid}</div>
+        </div>
+      </div>`;
+  });
 }
 
 
 /* ──────────────────────────────────────
-   9. 시즌별 상세 테이블
+   10. 시즌별 상세 테이블
+   [개선] 언더톤 열 + 가중치 열 추가
 ────────────────────────────────────── */
-function renderSeasonSections(results) {
+function renderSeasonSections(results, hsl, rgb) {
   const wrap = document.getElementById('seasonSections');
-  const bySeasonMap = {};
+  const ut   = calcUndertone(hsl.h, hsl.s, hsl.l, rgb.r, rgb.g, rgb.b);
+  const matched = matchPccsTone(hsl);
+
+  // 시즌별 그룹핑
+  const map = {};
   for (const r of results) {
-    if (!bySeasonMap[r.season]) bySeasonMap[r.season] = { icon: r.icon, tone: r.tone, rows: [] };
-    bySeasonMap[r.season].rows.push(r);
+    if (!map[r.season]) map[r.season] = { icon: r.icon, tone: r.tone, rows: [] };
+    map[r.season].rows.push(r);
   }
 
-  wrap.innerHTML = Object.entries(bySeasonMap).map(([season, { icon, tone, rows }]) => {
-    const toneClass = tone === '웜' ? 'warm' : 'cool';
+  wrap.innerHTML = Object.entries(map).map(([season, { icon, tone, rows }]) => {
+    const tc = tone === '웜' ? 'warm' : 'cool';
+
     const tableRows = rows.map(r => {
       const { cls, label } = gradeOf(r.score);
-      const pccsTags = r.type.pccs.map(k => {
-        const matched = matchPccsTone(rgbToHsl(hexToRgb(currentHex)));
-        const isMatch = matched && matched.key === k;
-        return `<span class="pccs-tag ${isMatch ? 'match' : ''}">${k.toUpperCase()}</span>`;
-      }).join('');
 
+      // PCCS 태그
+      const pccsTags = r.type.pccs.map(k =>
+        `<span class="pccs-tag ${matched && matched.key === k ? 'match' : ''}">${k.toUpperCase()}</span>`
+      ).join('');
+
+      // 스와치
       const swatches = r.type.colors.slice(0, 6).map(c =>
         `<div class="swatch" style="background:${c}" title="${c}"></div>`
       ).join('');
 
-      const hsl = rgbToHsl(hexToRgb(currentHex));
-      const hPct = (hsl.h / 360 * 100).toFixed(0);
-      const sPct = hsl.s;
-      const lPct = hsl.l;
+      // [개선] 언더톤 범위 일치 여부
+      const utInRange = ut >= r.type.undertoneRange[0] && ut <= r.type.undertoneRange[1];
+      const utCls     = utInRange ? 'ut-ok' : 'ut-ng';
+      const utText    = utInRange ? '✅ 일치' : '❌ 불일치';
+
+      // [개선] 가중치 표시
+      const W = r.type.weights;
+      const weightStr = `H${W.hue}/S${W.sat}/L${W.lig}/U${W.undertone}`;
 
       return `
         <tr>
@@ -322,23 +309,28 @@ function renderSeasonSections(results) {
           </td>
           <td>
             <div>${hsl.h}°</div>
-            <div class="bar-wrap"><div class="bar-fill bar-h" style="width:${hPct}%"></div></div>
+            <div class="bar-wrap"><div class="bar-fill bar-h" style="width:${(hsl.h/360*100).toFixed(0)}%"></div></div>
             <div class="bar-meta">H</div>
           </td>
           <td>
-            <div>${sPct}%</div>
-            <div class="bar-wrap"><div class="bar-fill bar-s" style="width:${sPct}%"></div></div>
+            <div>${hsl.s}%</div>
+            <div class="bar-wrap"><div class="bar-fill bar-s" style="width:${hsl.s}%"></div></div>
             <div class="bar-meta">S</div>
           </td>
           <td>
-            <div>${lPct}%</div>
-            <div class="bar-wrap"><div class="bar-fill bar-l" style="width:${lPct}%"></div></div>
+            <div>${hsl.l}%</div>
+            <div class="bar-wrap"><div class="bar-fill bar-l" style="width:${hsl.l}%"></div></div>
             <div class="bar-meta">L</div>
+          </td>
+          <td>
+            <div class="${utCls}" style="font-size:.72rem;font-weight:700">${utText}</div>
+            <div style="font-size:.65rem;color:#aaa;margin-top:2px">범위: ${r.type.undertoneRange[0]}~${r.type.undertoneRange[1]}</div>
           </td>
           <td><div class="pccs-tags">${pccsTags}</div></td>
           <td><div class="swatch-row">${swatches}</div></td>
           <td>
-            <span class="match-badge ${cls}">${label}</span>
+            <div class="match-badge ${cls}">${label}</div>
+            <div style="font-size:.6rem;color:#aaa;margin-top:3px">${weightStr}</div>
           </td>
           <td><span class="score ${cls}">${r.score}</span></td>
         </tr>`;
@@ -346,19 +338,18 @@ function renderSeasonSections(results) {
 
     return `
       <div class="season-section">
-        <div class="season-header" onclick="toggleTable('tbl-${season}', this)">
+        <div class="season-header" onclick="toggleTable('tbl-${season.replace(/\s/g,'_')}', this)">
           <span class="season-icon">${icon}</span>
           <span class="season-name">${season}</span>
-          <span class="tone-badge ${toneClass}">${tone}톤</span>
+          <span class="tone-badge ${tc}">${tone}톤</span>
           <button class="toggle-btn">▼ 펼치기</button>
         </div>
-        <div class="season-table-wrap" id="tbl-${season}" style="display:none">
+        <div class="season-table-wrap" id="tbl-${season.replace(/\s/g,'_')}" style="display:none">
           <table>
             <thead>
               <tr>
-                <th>유형</th><th>색상(H)</th><th>채도(S)</th>
-                <th>명도(L)</th><th>PCCS</th><th>대표색</th>
-                <th>어울림</th><th>점수</th>
+                <th>유형</th><th>색상(H)</th><th>채도(S)</th><th>명도(L)</th>
+                <th>언더톤</th><th>PCCS</th><th>대표색</th><th>어울림</th><th>점수</th>
               </tr>
             </thead>
             <tbody>${tableRows}</tbody>
@@ -378,7 +369,7 @@ function toggleTable(id, header) {
 
 
 /* ──────────────────────────────────────
-   10. 탭 이벤트
+   11. 탭 이벤트
 ────────────────────────────────────── */
 function initTabs() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -393,29 +384,31 @@ function initTabs() {
 
 
 /* ──────────────────────────────────────
-   11. 프리뷰 업데이트
+   12. 프리뷰 업데이트
+   [개선] 언더톤 수치 + 레이블 표시
 ────────────────────────────────────── */
-function updatePreview(hex, hsl, tone) {
-  const strip  = document.getElementById('previewStrip');
-  const circle = document.getElementById('previewCircle');
-  const hexEl  = document.getElementById('previewHex');
-  const pills  = document.getElementById('previewPills');
-
+function updatePreview(hex, hsl, rgb, tone) {
+  const strip = document.getElementById('previewStrip');
   strip.hidden = false;
-  circle.style.background = hex;
-  hexEl.textContent = hex.toUpperCase();
-  pills.innerHTML = `
+  document.getElementById('previewCircle').style.background = hex;
+  document.getElementById('previewHex').textContent = hex.toUpperCase();
+
+  const ut     = calcUndertone(hsl.h, hsl.s, hsl.l, rgb.r, rgb.g, rgb.b);
+  const utInfo = undertoneLabel(ut);
+
+  document.getElementById('previewPills').innerHTML = `
     <span class="pill pill-h">H ${hsl.h}°</span>
     <span class="pill pill-s">S ${hsl.s}%</span>
     <span class="pill pill-l">L ${hsl.l}%</span>
     ${tone ? `<span class="pill pill-pccs">${tone.key.toUpperCase()} · ${tone.label}</span>` : ''}
-  `;
+    <span class="pill" style="background:${utInfo.color}">${utInfo.text} ${ut > 0 ? '+' : ''}${ut}</span>`;
+
   renderPccsGrid(tone);
 }
 
 
 /* ──────────────────────────────────────
-   12. 메인 분석 실행
+   13. 메인 분석 실행
 ────────────────────────────────────── */
 let currentHex = '#FF6B6B';
 
@@ -423,62 +416,55 @@ function runAnalysis() {
   const rgb  = hexToRgb(currentHex);
   const hsl  = rgbToHsl(rgb);
   const tone = matchPccsTone(hsl);
+  const ut   = calcUndertone(hsl.h, hsl.s, hsl.l, rgb.r, rgb.g, rgb.b);
 
-  const results = analyzeAll(hsl);
+  // [개선] rgb도 함께 전달
+  const results = analyzeAll(hsl, rgb);
   const best    = results[0];
 
-  // 결과 영역 표시
-  document.getElementById('emptyState').hidden   = true;
+  document.getElementById('emptyState').hidden    = true;
   document.getElementById('resultContent').hidden = false;
 
-  renderPccsMap(hsl, tone);
-  renderRank(results);
+  renderPccsMap(hsl, rgb, tone);
+  renderRank(results, ut);
   renderStyleRec(best);
-  renderSeasonSections(results);
+  renderSeasonSections(results, hsl, rgb);
 
-  // 결과로 스크롤
   document.getElementById('resultContent').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 
 /* ──────────────────────────────────────
-   13. 입력 동기화 & 초기화
+   14. 입력 동기화 & 초기화
 ────────────────────────────────────── */
 function init() {
   const picker = document.getElementById('colorPicker');
   const hexIn  = document.getElementById('hexInput');
 
-  // 피커 → 텍스트 동기화
   picker.addEventListener('input', () => {
     currentHex = picker.value;
     hexIn.value = currentHex;
-    const hsl  = rgbToHsl(hexToRgb(currentHex));
-    const tone = matchPccsTone(hsl);
-    updatePreview(currentHex, hsl, tone);
+    const rgb  = hexToRgb(currentHex);
+    const hsl  = rgbToHsl(rgb);
+    updatePreview(currentHex, hsl, rgb, matchPccsTone(hsl));
   });
 
-  // 텍스트 → 피커 동기화
   hexIn.addEventListener('input', () => {
     const rgb = parseInput(hexIn.value);
     if (!rgb) return;
     currentHex = rgbToHex(rgb);
     picker.value = currentHex;
-    const hsl  = rgbToHsl(rgb);
-    const tone = matchPccsTone(hsl);
-    updatePreview(currentHex, hsl, tone);
+    const hsl = rgbToHsl(rgb);
+    updatePreview(currentHex, hsl, rgb, matchPccsTone(hsl));
   });
 
-  // 분석 버튼
   document.getElementById('analyzeBtn').addEventListener('click', runAnalysis);
-
-  // 탭 초기화
   initTabs();
 
   // 초기 프리뷰
-  const hsl  = rgbToHsl(hexToRgb(currentHex));
-  const tone = matchPccsTone(hsl);
-  updatePreview(currentHex, hsl, tone);
-  renderPccsGrid(tone);
+  const rgb  = hexToRgb(currentHex);
+  const hsl  = rgbToHsl(rgb);
+  updatePreview(currentHex, hsl, rgb, matchPccsTone(hsl));
 }
 
 document.addEventListener('DOMContentLoaded', init);
